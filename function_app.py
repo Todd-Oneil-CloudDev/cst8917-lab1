@@ -22,15 +22,9 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 # =============================================================================
 # SET ENVIRONMENT VARIABLES
 # =============================================================================
+_cosmos_client = None
+_cosmos_container = None
 
-CONN = os.getenv("DATABASE_CONNECTION_STRING")
-KEY = os.getenv("DATABASE_KEY")
-NAME = os.getenv("DATABASE_NAME")
-COLLECTION = os.getenv("DATABASE_COLLECTION")
-
-client = cosmos.CosmosClient(CONN, credential=KEY)
-database = client.get_database_client(NAME)
-container = database.get_container_client(COLLECTION)
 
 # =============================================================================
 # DEFINE THE TEXT ANALYZER FUNCTION
@@ -51,7 +45,7 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
 
     # Log a message so we can see in Azure Portal when the function is called
     logging.info('Text Analyzer API was called!')
-
+    get_container()
     # =========================================================================
     # STEP 1: GET THE TEXT INPUT
     # =========================================================================
@@ -158,7 +152,7 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
         # =====================================================================
 
         try:
-            container.create_item(body=response_data)
+            _cosmos_container.create_item(body=response_data)
         except CosmosHttpResponseError as e:
             raise RuntimeError(f"Failed to write item to Cosmos DB: {e}")
 
@@ -196,5 +190,38 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
         )
     
 @app.route(route="GetAnalysisHistory")
-def GetAnalysisHistory():
-    pass
+def GetAnalysisHistory(req: func.HttpRequest) -> func.HttpResponse:
+    get_container()
+    try:
+        limit = int(req.params.get("limit", 10))
+        query = f"SELECT * FROM c OFFSET 0 LIMIT {limit}"
+        items = list(_cosmos_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+        return func.HttpResponse(json.dumps(items), mimetype="application/json", status_code=200)
+    except CosmosHttpResponseError as e:
+        raise RuntimeError(f"Failed to write item to Cosmos DB: {e}")
+    
+# =============================================================================
+# COSMOS CLIENT (Lazy Initialization)
+# =============================================================================
+
+
+def get_container():
+    global _cosmos_client, _cosmos_container
+
+    if _cosmos_container is None:
+        CONN = os.getenv('DATABASE_CONNECTION_STRING')
+        KEY = os.getenv('DATABASE_KEY', 'demo')
+        NAME = os.getenv('DATABASE_NAME')
+        COLLECTION = os.getenv('DATABASE_COLLECTION')
+
+        if not CONN or not KEY or not NAME or not COLLECTION:
+            raise RuntimeError("Missing Cosmos DB environment variables")
+
+        _cosmos_client = cosmos.CosmosClient(CONN, credential=KEY)
+        database = _cosmos_client.get_database_client(NAME)
+        _cosmos_container = database.get_container_client(COLLECTION)
+
+    return _cosmos_container
