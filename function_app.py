@@ -1,11 +1,16 @@
 # =============================================================================
 # IMPORTS - Libraries we need for our function
 # =============================================================================
+import uuid
+
 import azure.functions as func  # Azure Functions SDK - required for all Azure Functions
+import azure.cosmos as cosmos   # Azure CosmosDB  SDK - required for CosmosDB
 import logging                  # Built-in Python library for printing log messages
 import json                     # Built-in Python library for working with JSON data
 import re                       # Built-in Python library for Regular Expressions (pattern matching)
+import os
 from datetime import datetime   # Built-in Python library for working with dates and times
+from azure.cosmos.exceptions import CosmosHttpResponseError
 
 # =============================================================================
 # CREATE THE FUNCTION APP
@@ -13,6 +18,19 @@ from datetime import datetime   # Built-in Python library for working with dates
 # This creates our Function App with anonymous access (no authentication required)
 # Think of this as the "container" that holds all our functions
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+# =============================================================================
+# SET ENVIRONMENT VARIABLES
+# =============================================================================
+
+CONN = os.getenv("DATABASE_CONNECTION_STRING")
+KEY = os.getenv("DATABASE_KEY")
+NAME = os.getenv("DATABASE_NAME")
+COLLECTION = os.getenv("DATABASE_COLLECTION")
+
+client = cosmos.CosmosClient(CONN, credential=KEY)
+database = client.get_database_client(NAME)
+container = database.get_container_client(COLLECTION)
 
 # =============================================================================
 # DEFINE THE TEXT ANALYZER FUNCTION
@@ -112,6 +130,7 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
         # Create a Python dictionary with all our analysis results
         # This will be converted to JSON format
         response_data = {
+            "id": str(uuid.uuid4()),
             "analysis": {
                 "wordCount": word_count,
                 "characterCount": char_count,
@@ -134,6 +153,15 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
             }
         }
 
+        # =====================================================================
+        # STEP 4: WRITE TO DATABASE
+        # =====================================================================
+
+        try:
+            container.create_item(body=response_data)
+        except CosmosHttpResponseError as e:
+            raise RuntimeError(f"Failed to write item to Cosmos DB: {e}")
+
         # Return a successful HTTP response
         # json.dumps() converts Python dictionary to JSON string
         # indent=2 makes the JSON nicely formatted (2 spaces per indent level)
@@ -146,7 +174,7 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     # =========================================================================
-    # STEP 4: HANDLE MISSING TEXT (Error Response)
+    # STEP 5: HANDLE MISSING TEXT (Error Response)
     # =========================================================================
     else:
         # If no text was provided, return helpful instructions
@@ -166,3 +194,7 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=400
         )
+    
+@app.route(route="GetAnalysisHistory")
+def GetAnalysisHistory():
+    pass
