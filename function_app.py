@@ -189,7 +189,7 @@ def TextAnalyzer(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400
         )
     
-@app.route(route="GetAnalysisHistory")
+@app.route(route="GetAnalysisHistory", methods=["GET"])
 def GetAnalysisHistory(req: func.HttpRequest) -> func.HttpResponse:
     get_container()
     try:
@@ -199,7 +199,21 @@ def GetAnalysisHistory(req: func.HttpRequest) -> func.HttpResponse:
             query=query,
             enable_cross_partition_query=True
         ))
-        return func.HttpResponse(json.dumps(items), mimetype="application/json", status_code=200)
+
+        """Format response structure"""
+        results = []
+        for item in items:
+            results.append({
+                "id": item.get('id'),
+                "analysis": item.get('analysis',{}),
+                "metadata": item.get('metadata', {})
+            })
+
+        response_body = {
+            "count": len(items),
+            "results": results
+        }
+        return func.HttpResponse(json.dumps(response_body), mimetype="application/json", status_code=200)
     except CosmosHttpResponseError as e:
         raise RuntimeError(f"Failed to write item to Cosmos DB: {e}")
     
